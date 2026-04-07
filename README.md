@@ -186,7 +186,7 @@ npm run build
 ## GitHub Actions
 
 - **CI** (`.github/workflows/ci.yml`) runs tests and build on pushes and pull requests to `main` / `master`.
-- **Release** (`.github/workflows/release.yml`) runs on tags `v*` and publishes to npm. Add an **`NPM_TOKEN`** secret with publish rights in the repository settings.
+- **Release** (`.github/workflows/release.yml`) runs when a **GitHub Release is published** and publishes to npm. Add an **`NPM_TOKEN`** secret with publish rights in the repository settings.
 
 ## Licence
 
