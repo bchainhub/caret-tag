@@ -1,6 +1,6 @@
 {
   "name": "caret-tag",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Transform ^portal:id markers into HTML, Markdown, raw URLs, or Misskey-flavoured Markdown (MFM).",
   "type": "module",
   "main": "./dist/index.js",
@@ -45,7 +45,7 @@
     "node": ">=18"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.5"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }
