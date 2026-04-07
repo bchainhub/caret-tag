@@ -35,7 +35,11 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bchainhub/caret-tag.git"
+    "url": "https://github.com/bchainhub/caret-tag.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "bugs": {
     "url": "https://github.com/bchainhub/caret-tag/issues"
