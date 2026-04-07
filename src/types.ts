@@ -9,7 +9,6 @@ export type PortalEntry = {
 
 export type PortalMap = Record<string, PortalEntry>;
 
-/** Misskey-style local file handling when format is `mfm`. */
 /** Max dimensions for HTML `<img>` output; aspect ratio is preserved via CSS. */
 export type HtmlImageSizeOptions = {
   /** CSS `max-width` (e.g. `260px`, `100%`). Default `260px`. */
@@ -67,4 +66,13 @@ export type CaretTagSettings = {
    * markdown, raw, and MFM use `\n\n` before and after.
    */
   imageBlock?: boolean;
+  /**
+   * When true (default), `transform()` fetches each emitted HTTPS image URL (HEAD/GET) to
+   * verify a real image is returned and to reduce SSRF risk (see `isSsrfSafeUrl`). If the
+   * check fails, the `^portal:id` segment is removed. MFM local `$[image id]` skips fetch.
+   * Set to false for offline use with `transformSync()`.
+   */
+  validateImageResource?: boolean;
+  /** Timeout in ms for each image check when `validateImageResource` is true. Default `10000`. */
+  fetchTimeoutMs?: number;
 };

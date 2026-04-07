@@ -1,6 +1,6 @@
 # Caret Tag
 
-Lightweight TypeScript helper that finds `^portal:id` markers in text and replaces them with **HTML**, **Markdown**, a **raw URL**, or **Misskey-flavoured Markdown (MFM)**. Only portals you configure (or the built-in defaults) are touched; ids are validated so arbitrary strings cannot be turned into links.
+Lightweight TypeScript helper that finds `^portal:id` markers in text and replaces them with **HTML**, **Markdown**, a **raw URL**, or **Misskey-flavoured Markdown (MFM)**. Only portals you configure (or the built-in defaults) are touched; ids are validated locally, and by default each emitted **HTTPS image URL** is fetched to confirm a real image is returned (with basic SSRF blocking; plain `http:` is never fetched).
 
 ## Install
 
@@ -12,29 +12,36 @@ Requires **Node.js 18+** (or any environment that supports ES modules).
 
 ## Usage
 
-Create one **`CaretTag`** instance with your settings, then call **`transform`** on each string.
+Create one **`CaretTag`** instance with your settings, then **`await transform(text)`** (async). By default this checks each target image URL over the network before inserting markup.
 
 ```ts
 import { CaretTag } from "caret-tag";
 
 const text = "Hi ^giphy:cat.gif";
 
-const html = new CaretTag().transform(text);
+const html = await new CaretTag().transform(text);
 // => 'Hi <img src="https://giphy.com/gifs/cat.gif" alt="cat.gif" style="max-width:260px;max-height:146px;width:auto;height:auto;object-fit:contain;" />'
 
-const md = new CaretTag({ format: "markdown" }).transform(text);
+const md = await new CaretTag({ format: "markdown" }).transform(text);
 // => 'Hi ![cat.gif](https://giphy.com/gifs/cat.gif)'
 
-const raw = new CaretTag({ format: "raw" }).transform(text);
+const raw = await new CaretTag({ format: "raw" }).transform(text);
 // => 'Hi https://giphy.com/gifs/cat.gif'
+```
+
+**Offline / no network:** set **`validateImageResource: false`** and use synchronous **`transformSync()`**:
+
+```ts
+const tag = new CaretTag({ validateImageResource: false });
+tag.transformSync("^giphy:a.gif");
 ```
 
 Reuse a single instance when options stay the same:
 
 ```ts
 const tag = new CaretTag({ format: "markdown" });
-tag.transform("^giphy:a.gif");
-tag.transform("^tenor:b.gif");
+await tag.transform("^giphy:a.gif");
+await tag.transform("^tenor:b.gif");
 ```
 
 ### Formats
@@ -51,7 +58,7 @@ tag.transform("^tenor:b.gif");
 Each portal is a **name** (used after `^`) and a **base URL**. The final image URL is `baseUrl` + `id`, with a trailing slash added to `baseUrl` when it is missing.
 
 ```ts
-new CaretTag({
+await new CaretTag({
   portals: {
     cats: { url: "https://example.com/cdn" },
   },
@@ -71,6 +78,21 @@ If `portals` is omitted or empty, these defaults are used:
 
 If you pass a non-empty `portals` object, **only** those names are recognised (defaults are not merged).
 
+### Remote image validation (default on)
+
+When **`validateImageResource`** is **`true`** (default), **`transform()`** uses global **`fetch`** to verify each URL that would be embedded as an image:
+
+- **SSRF:** only **`https:`** URLs (plain `http:` is not allowed); no credentials; blocks `localhost`, private and link-local IPv4, and similar.
+- **Content:** prefers **`HEAD`** with `Content-Type: image/*`; otherwise **`GET`** (with `Range` when possible) and checks bytes for common image signatures (GIF, PNG, JPEG, WebP, …).
+
+If validation fails, the **`^portal:id`** segment is **removed** (empty string), so nothing unsafe is embedded.
+
+**MFM** local files (`$[image id]` when the portal matches the instance files base) **does not** perform a fetch (no HTTP URL is emitted).
+
+**Options:** **`fetchTimeoutMs`** (default `10000`) per request chain.
+
+Lower-level helpers are exported: **`isSsrfSafeUrl`**, **`validateRemoteImageResource`**, **`hasImageMagicBytes`**.
+
 ### HTML image size (`format: "html"` only)
 
 HTML output includes a `style` attribute so images stay within a box while keeping aspect ratio: `max-width` and `max-height` with `width:auto`, `height:auto`, and `object-fit:contain`.
@@ -79,7 +101,7 @@ HTML output includes a `style` attribute so images stay within a box while keepi
 - Override with **`htmlImageSize`**: `{ maxWidth?: string, maxHeight?: string }` (any CSS length, e.g. `"400px"`, `"100%"`).
 
 ```ts
-new CaretTag({
+await new CaretTag({
   htmlImageSize: { maxWidth: "320px", maxHeight: "180px" },
 }).transform("^giphy:cat.gif");
 ```
@@ -92,10 +114,10 @@ When **`imageBlock: true`**, each replacement is isolated on its own line:
 - **`markdown`**, **`raw`**, **`mfm`** — two newlines (`\n\n`) before and after the replacement text.
 
 ```ts
-new CaretTag({ imageBlock: true }).transform("Hi ^giphy:x.gif end");
+await new CaretTag({ imageBlock: true }).transform("Hi ^giphy:x.gif end");
 // HTML: 'Hi <br /><img … /><br /> end'
 
-new CaretTag({ format: "markdown", imageBlock: true }).transform(
+await new CaretTag({ format: "markdown", imageBlock: true }).transform(
   "Hi ^giphy:x.gif end",
 );
 // 'Hi \n\n![x.gif](…)\n\n end'
@@ -109,7 +131,7 @@ When `format` is `"mfm"`, you must set `mfm.instanceBaseUrl`. Optionally set `mf
 - Otherwise the marker becomes **`![id](https://<instance><filesPath>/<id>)`** (remote-style fallback).
 
 ```ts
-new CaretTag({
+await new CaretTag({
   format: "mfm",
   portals: {
     files: { url: "https://coretalk.space/files" },
@@ -121,7 +143,7 @@ new CaretTag({
 }).transform("^files:abc.gif");
 // => '$[image abc.gif]'
 
-new CaretTag({
+await new CaretTag({
   format: "mfm",
   mfm: { instanceBaseUrl: "https://coretalk.space", filesPath: "/files" },
 }).transform("^giphy:abc.gif");
@@ -137,7 +159,7 @@ To avoid turning malicious text into URLs, the `id` segment is checked:
 - If there is no extension, replacement only happens when **`allowExtensionlessIds`** is `true` (default **`false`**), and the id must match `[a-zA-Z0-9_-]+`.
 
 ```ts
-new CaretTag({
+await new CaretTag({
   acceptedExtensions: ["gif", "png", "webp"],
 }).transform("^giphy:photo.png");
 ```
@@ -145,8 +167,9 @@ new CaretTag({
 ## API
 
 - **`new CaretTag(settings?: CaretTagSettings)`** — store options; throws if `format` is `"mfm"` and `mfm.instanceBaseUrl` is missing.
-- **`caretTag.transform(input: string): string`** — replace `^portal:id` markers using the instance settings.
-- **`htmlImageSize`** / **`imageBlock`** — see sections above (`CaretTagSettings` in types).
+- **`await caretTag.transform(input: string): Promise<string>`** — replace `^portal:id` markers; remote image checks when `validateImageResource` is true (default).
+- **`caretTag.transformSync(input: string): string`** — synchronous replacement; only when **`validateImageResource: false`** (otherwise throws).
+- **`validateImageResource`** / **`fetchTimeoutMs`** / **`htmlImageSize`** / **`imageBlock`** — see sections above (`CaretTagSettings` in types).
 - **`normalizePortalUrl(url: string)`** — trim and ensure a trailing `/`.
 - **`portalMatchesInstanceFiles(portalUrlNormalized, instanceBaseUrl, filesPath?)`** — whether a portal points at the instance files base (for MFM).
 - **`isValidImageId(id, acceptedExtensions, allowExtensionlessIds)`** — same rules as the transformer.

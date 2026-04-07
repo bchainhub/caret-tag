@@ -14,3 +14,8 @@ export {
   portalMatchesInstanceFiles,
 } from "./url.js";
 export { isValidImageId } from "./validate.js";
+export {
+  hasImageMagicBytes,
+  isSsrfSafeUrl,
+  validateRemoteImageResource,
+} from "./remote-image.js";
