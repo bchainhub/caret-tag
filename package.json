@@ -1,0 +1,51 @@
+{
+  "name": "caret-tag",
+  "version": "0.1.0",
+  "description": "Transform ^portal:id markers into HTML, Markdown, raw URLs, or Misskey-flavoured Markdown (MFM).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "markdown",
+    "mfm",
+    "misskey",
+    "portal",
+    "caret",
+    "transform",
+    "giphy",
+    "tenor"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bchainhub/caret-tag.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bchainhub/caret-tag/issues"
+  },
+  "homepage": "https://github.com/bchainhub/caret-tag#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
