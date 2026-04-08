@@ -1,11 +1,28 @@
 import { DEFAULT_PORTALS } from "./defaults.js";
+import {
+  buildPortalImageUrl,
+  parseCssLengthToPx,
+} from "./portal-url.js";
 import { validateRemoteImageResource } from "./remote-image.js";
-import type { CaretTagFormat, CaretTagSettings, PortalMap } from "./types.js";
-import { filesBaseUrl, normalizePortalUrl, portalMatchesInstanceFiles } from "./url.js";
+import {
+  DEFAULT_ID_EXTENSIONS_WHEN_ENABLED,
+  type CaretTagFormat,
+  type CaretTagSettings,
+  type GiphyMediaVariant,
+  type ImgurThumbnailOption,
+  type PortalEntry,
+  type PortalMap,
+} from "./types.js";
+import { decodeKebabAlt, escapeMarkdownImageAlt } from "./alt-text.js";
 import { isValidImageId } from "./validate.js";
 
-/** Matches `^portal:id` — portal is a word, id is non-whitespace without `^`. */
-const CARET_TAG = /\^([a-zA-Z][a-zA-Z0-9_-]*):([^\s^]+)/g;
+/**
+ * Matches `^portal:id` or `^portal:id:alt` (optional third segment).
+ * `id` must not contain `:`; the third segment is always passed through `decodeKebabAlt` (not configurable).
+ * `alt` may contain colons (`^portal:a:b:c` → id `a`, alt `b:c` decoded as one string with hyphens → spaces only).
+ */
+const CARET_TAG =
+  /\^([a-zA-Z][a-zA-Z0-9_-]*):([^:\s^]+)(?::([^\s^]+))?/g;
 
 function caretTagRegex(): RegExp {
   return new RegExp(CARET_TAG.source, CARET_TAG.flags);
@@ -24,51 +41,52 @@ function resolvePortals(portals?: PortalMap): PortalMap {
   return { ...DEFAULT_PORTALS };
 }
 
-function buildImageUrl(portalUrl: string, id: string): string {
-  return `${normalizePortalUrl(portalUrl)}${id}`;
-}
-
 const DEFAULT_HTML_MAX_WIDTH = "260px";
-const DEFAULT_HTML_MAX_HEIGHT = "146px";
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+const DEFAULT_GIPHY_VARIANT: GiphyMediaVariant = "giphy.gif";
+const DEFAULT_IMGUR_THUMB: ImgurThumbnailOption = "auto";
 
 export class CaretTag {
-  private readonly settings: CaretTagSettings;
   private readonly format: CaretTagFormat;
   private readonly portals: PortalMap;
   private readonly normalizedAccepted: string[];
   private readonly allowExtensionless: boolean;
   private readonly portalKeys: Set<string>;
   private readonly htmlMaxWidth: string;
-  private readonly htmlMaxHeight: string;
+  private readonly htmlMaxHeight: string | undefined;
+  private readonly maxWidthPx: number | null;
+  private readonly giphyMediaVariant: GiphyMediaVariant;
+  private readonly imgurThumbnail: ImgurThumbnailOption;
   private readonly imageBlock: boolean;
   private readonly validateImageResource: boolean;
   private readonly fetchTimeoutMs: number;
 
   constructor(settings: CaretTagSettings = {}) {
-    const format: CaretTagFormat = settings.format ?? "html";
-    if (format === "mfm" && !settings.mfm?.instanceBaseUrl) {
-      throw new Error('caret-tag: format "mfm" requires settings.mfm.instanceBaseUrl');
-    }
-
-    this.settings = settings;
-    this.format = format;
+    this.format = settings.format ?? "html";
     this.portals = resolvePortals(settings.portals);
-    const accepted = settings.acceptedExtensions ?? ["gif"];
+    const accepted =
+      settings.acceptedExtensions !== undefined
+        ? settings.acceptedExtensions
+        : settings.enableExtensions
+          ? [...DEFAULT_ID_EXTENSIONS_WHEN_ENABLED]
+          : [];
     this.normalizedAccepted = accepted.map((e) => e.toLowerCase().replace(/^\./, ""));
-    this.allowExtensionless = settings.allowExtensionlessIds ?? false;
+    this.allowExtensionless = settings.allowExtensionlessIds ?? true;
     this.portalKeys = new Set(Object.keys(this.portals));
     const size = settings.htmlImageSize;
     this.htmlMaxWidth = size?.maxWidth ?? DEFAULT_HTML_MAX_WIDTH;
-    this.htmlMaxHeight = size?.maxHeight ?? DEFAULT_HTML_MAX_HEIGHT;
+    this.htmlMaxHeight = size?.maxHeight;
+    this.maxWidthPx = parseCssLengthToPx(this.htmlMaxWidth);
+    this.giphyMediaVariant = settings.giphyMediaVariant ?? DEFAULT_GIPHY_VARIANT;
+    this.imgurThumbnail = settings.imgurThumbnail ?? DEFAULT_IMGUR_THUMB;
     this.imageBlock = settings.imageBlock ?? false;
     this.validateImageResource = settings.validateImageResource ?? true;
     this.fetchTimeoutMs = settings.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   }
 
   /**
-   * Replace `^portal:id` markers. When `validateImageResource` is true (default), fetches each
-   * target URL to verify an image is returned (see `validateRemoteImageResource`).
+   * Replace `^portal:id` or `^portal:id:kebab-alt` markers. When `validateImageResource` is true
+   * (default), fetches each target URL to verify an image is returned (see `validateRemoteImageResource`).
    */
   async transform(input: string): Promise<string> {
     if (!this.validateImageResource) {
@@ -90,6 +108,14 @@ export class CaretTag {
     return this.replaceSync(input);
   }
 
+  private imageUrlFor(entry: PortalEntry, id: string): string {
+    return buildPortalImageUrl(entry, id, {
+      maxWidthPx: this.maxWidthPx,
+      giphyMediaVariant: this.giphyMediaVariant,
+      imgurThumbnail: this.imgurThumbnail,
+    });
+  }
+
   private async replaceAsyncWithValidation(input: string): Promise<string> {
     const matches = [...input.matchAll(caretTagRegex())];
     if (matches.length === 0) return input;
@@ -100,11 +126,12 @@ export class CaretTag {
       const full = m[0];
       const portalName = m[1]!;
       const id = m[2]!;
+      const altRaw = m[3];
       const start = m.index!;
       out += input.slice(lastIndex, start);
       lastIndex = start + full.length;
 
-      const next = await this.replaceOneAsync(portalName, id, full);
+      const next = await this.replaceOneAsync(portalName, id, altRaw, full);
       out += next;
     }
     out += input.slice(lastIndex);
@@ -114,6 +141,7 @@ export class CaretTag {
   private async replaceOneAsync(
     portalName: string,
     id: string,
+    altRaw: string | undefined,
     full: string,
   ): Promise<string> {
     if (!this.portalKeys.has(portalName)) return full;
@@ -125,64 +153,36 @@ export class CaretTag {
     const entry = this.portals[portalName];
     if (!entry?.url) return full;
 
-    const portalUrlNormalized = normalizePortalUrl(entry.url);
-    const imageUrl = buildImageUrl(entry.url, id);
+    const imageUrl = this.imageUrlFor(entry, id);
 
-    const urlToCheck = this.getRemoteUrlForValidation(
-      id,
-      imageUrl,
-      portalUrlNormalized,
-    );
-    if (urlToCheck !== null) {
-      const ok = await validateRemoteImageResource(urlToCheck, {
-        timeoutMs: this.fetchTimeoutMs,
-      });
-      if (!ok) return "";
-    }
+    const ok = await validateRemoteImageResource(imageUrl, {
+      timeoutMs: this.fetchTimeoutMs,
+    });
+    if (!ok) return "";
 
-    const inner = this.render(this.format, id, imageUrl, portalUrlNormalized);
+    const inner = this.render(this.format, imageUrl, id, altRaw);
     return this.wrapReplacement(inner);
   }
 
-  /**
-   * URL to validate over HTTP, or `null` when no fetchable URL is emitted (MFM local `$[image id]`).
-   */
-  private getRemoteUrlForValidation(
-    id: string,
-    imageUrl: string,
-    portalUrlNormalized: string,
-  ): string | null {
-    if (this.format !== "mfm") {
-      return imageUrl;
-    }
-    const mfm = this.settings.mfm!;
-    const filesPath = mfm.filesPath;
-    if (
-      portalMatchesInstanceFiles(portalUrlNormalized, mfm.instanceBaseUrl, filesPath)
-    ) {
-      return null;
-    }
-    const base = filesBaseUrl(mfm.instanceBaseUrl, filesPath);
-    return `${base}${encodeURIComponent(id)}`;
-  }
-
   private replaceSync(input: string): string {
-    return input.replace(caretTagRegex(), (full, portalName: string, id: string) => {
-      if (!this.portalKeys.has(portalName)) return full;
+    return input.replace(
+      caretTagRegex(),
+      (full, portalName: string, id: string, altRaw?: string) => {
+        if (!this.portalKeys.has(portalName)) return full;
 
-      if (!isValidImageId(id, this.normalizedAccepted, this.allowExtensionless)) {
-        return full;
-      }
+        if (!isValidImageId(id, this.normalizedAccepted, this.allowExtensionless)) {
+          return full;
+        }
 
-      const entry = this.portals[portalName];
-      if (!entry?.url) return full;
+        const entry = this.portals[portalName];
+        if (!entry?.url) return full;
 
-      const portalUrlNormalized = normalizePortalUrl(entry.url);
-      const imageUrl = buildImageUrl(entry.url, id);
+        const imageUrl = this.imageUrlFor(entry, id);
 
-      const inner = this.render(this.format, id, imageUrl, portalUrlNormalized);
-      return this.wrapReplacement(inner);
-    });
+        const inner = this.render(this.format, imageUrl, id, altRaw);
+        return this.wrapReplacement(inner);
+      },
+    );
   }
 
   private wrapReplacement(content: string): string {
@@ -193,41 +193,41 @@ export class CaretTag {
     return `\n\n${content}\n\n`;
   }
 
-  private renderHtmlImg(imageUrl: string, id: string): string {
+  private renderHtmlImg(imageUrl: string, htmlAlt?: string): string {
     const safeSrc = escapeHtmlAttr(imageUrl);
-    const safeAlt = escapeHtmlAttr(id);
-    const style = escapeHtmlAttr(
-      `max-width:${this.htmlMaxWidth};max-height:${this.htmlMaxHeight};width:auto;height:auto;object-fit:contain;`,
-    );
-    return `<img src="${safeSrc}" alt="${safeAlt}" style="${style}" />`;
+    const parts: string[] = [
+      `max-width:${this.htmlMaxWidth}`,
+      `width:auto`,
+      `height:auto`,
+      `object-fit:contain`,
+    ];
+    if (this.htmlMaxHeight !== undefined) {
+      parts.splice(1, 0, `max-height:${this.htmlMaxHeight}`);
+    }
+    const style = escapeHtmlAttr(`${parts.join(";")};`);
+    const altAttr =
+      htmlAlt !== undefined ? ` alt="${escapeHtmlAttr(htmlAlt)}"` : "";
+    return `<img src="${safeSrc}"${altAttr} style="${style}" />`;
   }
 
   private render(
     format: CaretTagFormat,
-    id: string,
     imageUrl: string,
-    portalUrlNormalized: string,
+    id: string,
+    altRaw?: string,
   ): string {
     if (format === "raw") return imageUrl;
 
+    // Third segment: always kebab-decode for HTML and Markdown (no CaretTag setting).
+    const htmlAlt =
+      altRaw !== undefined ? decodeKebabAlt(altRaw) : undefined;
+    const markdownAlt =
+      altRaw !== undefined ? decodeKebabAlt(altRaw) : id;
+
     if (format === "markdown") {
-      return `![${id}](${imageUrl})`;
+      return `![${escapeMarkdownImageAlt(markdownAlt)}](${imageUrl})`;
     }
 
-    if (format === "html") {
-      return this.renderHtmlImg(imageUrl, id);
-    }
-
-    const mfm = this.settings.mfm!;
-    const filesPath = mfm.filesPath;
-    if (
-      portalMatchesInstanceFiles(portalUrlNormalized, mfm.instanceBaseUrl, filesPath)
-    ) {
-      return `$[image ${id}]`;
-    }
-
-    const base = filesBaseUrl(mfm.instanceBaseUrl, filesPath);
-    const remoteUrl = `${base}${encodeURIComponent(id)}`;
-    return `![${id}](${remoteUrl})`;
+    return this.renderHtmlImg(imageUrl, htmlAlt);
   }
 }
