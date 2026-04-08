@@ -6,8 +6,8 @@ const MAX_ID_LENGTH = 512;
 /**
  * Validates the id part of `^portal:id` for safe image-like use.
  *
- * - If the id contains a dot, the suffix must be one of `acceptedExtensions` (lowercase, no dot).
- * - If there is no extension, `allowExtensionlessIds` must be true and the id must be alphanumeric plus `_-`.
+ * - If the id contains a dot, the segment after the last dot must be in `acceptedExtensions` (lowercase, no dot). With **`acceptedExtensions: []`**, any id that contains **`.`** is rejected.
+ * - If there is no dot, the id is allowed when `allowExtensionlessIds` is `true` (default) and the id matches `[a-zA-Z0-9_-]+`.
  */
 export function isValidImageId(
   id: string,

@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { CaretTag } from "../src/caret-tag.js";
-import { normalizePortalUrl, portalMatchesInstanceFiles } from "../src/url.js";
+import { normalizePortalUrl } from "../src/url.js";
 import { isValidImageId } from "../src/validate.js";
 
+const GIPHY_CAT = "https://media1.giphy.com/media/cat/giphy.gif";
+
 const DEFAULT_IMG_STYLE =
-  'style="max-width:260px;max-height:146px;width:auto;height:auto;object-fit:contain;"';
+  'style="max-width:260px;width:auto;height:auto;object-fit:contain;"';
+
+const imgHtml = (src: string, alt?: string) =>
+  alt !== undefined
+    ? `<img src="${src}" alt="${alt}" ${DEFAULT_IMG_STYLE} />`
+    : `<img src="${src}" ${DEFAULT_IMG_STYLE} />`;
 
 /** Fast tests without network (default `validateImageResource` is true). */
 function tag(
@@ -14,21 +21,19 @@ function tag(
 }
 
 describe("CaretTag", () => {
-  it("defaults to HTML for built-in giphy", () => {
-    const out = tag().transformSync("x ^giphy:cat.gif y");
-    expect(out).toBe(
-      `x <img src="https://giphy.com/gifs/cat.gif" alt="cat.gif" ${DEFAULT_IMG_STYLE} /> y`,
-    );
+  it("defaults to HTML for built-in giphy (no alt attr without third segment)", () => {
+    const out = tag().transformSync("x ^giphy:cat y");
+    expect(out).toBe(`x ${imgHtml(GIPHY_CAT)} y`);
   });
 
-  it("outputs markdown", () => {
-    const out = tag({ format: "markdown" }).transformSync("x ^giphy:cat.gif y");
-    expect(out).toBe("x ![cat.gif](https://giphy.com/gifs/cat.gif) y");
+  it("outputs markdown with id as alt when alt segment omitted", () => {
+    const out = tag({ format: "markdown" }).transformSync("x ^giphy:cat y");
+    expect(out).toBe(`x ![cat](${GIPHY_CAT}) y`);
   });
 
   it("outputs raw URL", () => {
-    const out = tag({ format: "raw" }).transformSync("x ^giphy:cat.gif y");
-    expect(out).toBe("x https://giphy.com/gifs/cat.gif y");
+    const out = tag({ format: "raw" }).transformSync("x ^giphy:cat y");
+    expect(out).toBe(`x ${GIPHY_CAT} y`);
   });
 
   it("uses custom portals only when list is non-empty", () => {
@@ -39,35 +44,12 @@ describe("CaretTag", () => {
 
     const ok = tag({
       portals: { custom: { url: "https://example.com/p/" } },
-    }).transformSync("^custom:ok.gif");
-    expect(ok).toBe(
-      `<img src="https://example.com/p/ok.gif" alt="ok.gif" ${DEFAULT_IMG_STYLE} />`,
-    );
-  });
-
-  it("MFM uses $[image id] when portal URL equals instance files base", () => {
-    const out = tag({
-      format: "mfm",
-      portals: {
-        files: { url: "https://coretalk.space/files" },
-      },
-      mfm: { instanceBaseUrl: "https://coretalk.space", filesPath: "/files" },
-    }).transformSync("^files:abc.gif");
-    expect(out).toBe("$[image abc.gif]");
-  });
-
-  it("MFM falls back to markdown with instance files URL when portal is remote", () => {
-    const out = tag({
-      format: "mfm",
-      mfm: { instanceBaseUrl: "https://coretalk.space", filesPath: "/files" },
-    }).transformSync("^giphy:abc.gif");
-    expect(out).toBe(
-      "![abc.gif](https://coretalk.space/files/abc.gif)",
-    );
+    }).transformSync("^custom:ok");
+    expect(ok).toBe(`<img src="https://example.com/p/ok" ${DEFAULT_IMG_STYLE} />`);
   });
 
   it("does not transform unknown portals", () => {
-    expect(tag().transformSync("^unknown:a.gif")).toBe("^unknown:a.gif");
+    expect(tag().transformSync("^unknown:a")).toBe("^unknown:a");
   });
 
   it("does not transform invalid ids (wrong extension)", () => {
@@ -78,62 +60,65 @@ describe("CaretTag", () => {
     const out = tag({
       acceptedExtensions: ["gif", "png"],
     }).transformSync("^giphy:pic.png");
-    expect(out).toContain("pic.png");
+    expect(out).toContain("https://media1.giphy.com/media/pic/giphy.gif");
   });
 
-  it("allows extensionless ids when enabled", () => {
-    const out = tag({
-      allowExtensionlessIds: true,
-    }).transformSync("^giphy:abc123");
-    expect(out).toContain("https://giphy.com/gifs/abc123");
+  it("allows dotted ids when enableExtensions is true", () => {
+    const out = tag({ enableExtensions: true }).transformSync(
+      "x ^giphy:cat.gif y",
+    );
+    expect(out).toContain("https://media1.giphy.com/media/cat/giphy.gif");
+    expect(out).not.toContain("alt=");
   });
 
-  it("throws when mfm is missing instanceBaseUrl", () => {
-    expect(() => new CaretTag({ format: "mfm" })).toThrow(/instanceBaseUrl/);
+  it("allows extensionless ids by default", () => {
+    const out = tag().transformSync("^giphy:abc123");
+    expect(out).toContain(
+      "https://media1.giphy.com/media/abc123/giphy.gif",
+    );
+  });
+
+  it("rejects extensionless ids when allowExtensionlessIds is false", () => {
+    expect(
+      tag({ allowExtensionlessIds: false }).transformSync("^giphy:abc123"),
+    ).toBe("^giphy:abc123");
   });
 
   it("applies custom htmlImageSize in style", () => {
     const out = tag({
       htmlImageSize: { maxWidth: "400px", maxHeight: "200px" },
-    }).transformSync("^giphy:a.gif");
+    }).transformSync("^giphy:a");
     expect(out).toContain("max-width:400px");
     expect(out).toContain("max-height:200px");
   });
 
   it("imageBlock wraps HTML with br", () => {
-    const out = tag({ imageBlock: true }).transformSync("a ^giphy:x.gif b");
+    const out = tag({ imageBlock: true }).transformSync("a ^giphy:x b");
     expect(out).toBe(
-      `a <br /><img src="https://giphy.com/gifs/x.gif" alt="x.gif" ${DEFAULT_IMG_STYLE} /><br /> b`,
+      `a <br />${imgHtml("https://media1.giphy.com/media/x/giphy.gif")}<br /> b`,
     );
   });
 
   it("imageBlock wraps markdown with newlines", () => {
     const out = tag({ format: "markdown", imageBlock: true }).transformSync(
-      "a ^giphy:x.gif b",
+      "a ^giphy:x b",
     );
-    expect(out).toBe("a \n\n![x.gif](https://giphy.com/gifs/x.gif)\n\n b");
+    expect(out).toBe(
+      "a \n\n![x](https://media1.giphy.com/media/x/giphy.gif)\n\n b",
+    );
   });
 
   it("imageBlock wraps raw with newlines", () => {
     const out = tag({ format: "raw", imageBlock: true }).transformSync(
-      "a ^giphy:x.gif b",
+      "a ^giphy:x b",
     );
-    expect(out).toBe("a \n\nhttps://giphy.com/gifs/x.gif\n\n b");
-  });
-
-  it("imageBlock wraps mfm with newlines", () => {
-    const out = tag({
-      format: "mfm",
-      imageBlock: true,
-      mfm: { instanceBaseUrl: "https://coretalk.space", filesPath: "/files" },
-    }).transformSync("a ^giphy:x.gif b");
     expect(out).toBe(
-      "a \n\n![x.gif](https://coretalk.space/files/x.gif)\n\n b",
+      "a \n\nhttps://media1.giphy.com/media/x/giphy.gif\n\n b",
     );
   });
 
   it("transformSync throws when validateImageResource is true (default)", () => {
-    expect(() => new CaretTag().transformSync("^giphy:a.gif")).toThrow(
+    expect(() => new CaretTag().transformSync("^giphy:a")).toThrow(
       /validateImageResource/,
     );
   });
@@ -151,7 +136,7 @@ describe("CaretTag", () => {
     const out = await new CaretTag({
       validateImageResource: true,
       portals: { t: { url: "https://example.com/i/" } },
-    }).transform("before ^t:x.gif after");
+    }).transform("before ^t:x after");
 
     expect(out).toBe("before  after");
     vi.unstubAllGlobals();
@@ -168,29 +153,61 @@ describe("CaretTag", () => {
     const out = await new CaretTag({
       validateImageResource: true,
       portals: { t: { url: "https://example.com/i/" } },
-    }).transform("^t:x.gif");
+    }).transform("^t:x");
 
     expect(out).toContain("<img ");
-    expect(out).toContain("https://example.com/i/x.gif");
+    expect(out).not.toContain("alt=");
+    expect(out).toContain("https://example.com/i/x");
     vi.unstubAllGlobals();
   });
 
-  it("MFM local skips fetch", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it("uses tenor_s.gif when default max-width is 260px", () => {
+    const out = tag().transformSync("^tenor:nDrR1iOWmn0AAAAd");
+    expect(out).toContain(
+      "https://media.tenor.com/nDrR1iOWmn0AAAAd/tenor_s.gif",
+    );
+  });
 
-    const out = await new CaretTag({
-      validateImageResource: true,
-      format: "mfm",
-      portals: {
-        files: { url: "https://coretalk.space/files" },
-      },
-      mfm: { instanceBaseUrl: "https://coretalk.space", filesPath: "/files" },
-    }).transform("^files:abc.gif");
+  it("uses tenor.gif when max-width px is closer to 480 than 300", () => {
+    const out = tag({
+      htmlImageSize: { maxWidth: "400px" },
+    }).transformSync("^tenor:nDrR1iOWmn0AAAAd");
+    expect(out).toContain(
+      "https://media.tenor.com/nDrR1iOWmn0AAAAd/tenor.gif",
+    );
+  });
 
-    expect(out).toBe("$[image abc.gif]");
-    expect(fetchMock).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+  it("respects giphyMediaVariant", () => {
+    const out = tag({ giphyMediaVariant: "200.gif" }).transformSync(
+      "^giphy:cat",
+    );
+    expect(out).toContain(
+      "https://media1.giphy.com/media/cat/200.gif",
+    );
+  });
+
+  it("inserts imgur thumbnail letter from default max-width", () => {
+    const out = tag().transformSync("^imgur:abcd123");
+    expect(out).toContain("https://i.imgur.com/abcd123m");
+  });
+
+  it("uses imgur original when imgurThumbnail is original", () => {
+    const out = tag({ imgurThumbnail: "original" }).transformSync(
+      "^imgur:abcd123",
+    );
+    expect(out).toContain("https://i.imgur.com/abcd123");
+    expect(out).not.toContain("abcd123m");
+  });
+
+  it("adds html alt and markdown decoded alt when third segment present", () => {
+    const url = "https://i.imgur.com/tpTZxoXm";
+    const html = tag().transformSync(`^imgur:tpTZxoX:my-cool-label`);
+    expect(html).toContain(imgHtml(url, "my cool label"));
+
+    const md = tag({ format: "markdown" }).transformSync(
+      "^imgur:tpTZxoX:my-cool-label",
+    );
+    expect(md).toBe(`![my cool label](${url})`);
   });
 });
 
@@ -200,22 +217,15 @@ describe("normalizePortalUrl", () => {
   });
 });
 
-describe("portalMatchesInstanceFiles", () => {
-  it("matches normalized files base", () => {
-    expect(
-      portalMatchesInstanceFiles(
-        "https://coretalk.space/files/",
-        "https://coretalk.space",
-        "/files",
-      ),
-    ).toBe(true);
-  });
-});
-
 describe("isValidImageId", () => {
   it("rejects path segments and schemes", () => {
     expect(isValidImageId("../x.gif", ["gif"], false)).toBe(false);
     expect(isValidImageId("x/y.gif", ["gif"], false)).toBe(false);
     expect(isValidImageId("data:x", ["gif"], true)).toBe(false);
+  });
+
+  it("rejects dotted ids when acceptedExtensions is empty", () => {
+    expect(isValidImageId("a.gif", [], true)).toBe(false);
+    expect(isValidImageId("a", [], true)).toBe(true);
   });
 });
